@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#ff4d4d">
+<title>Dodge-Bc</title>
+<style>
+html, body{
+    margin:0; padding:0; width:100%; height:100%; overflow:hidden;
+    background:#121212; font-family:sans-serif;
+}
+#gameCanvas{display:block; width:100%; height:100%; touch-action:none;}
+#scoreboard{
+    position:absolute; top:10px; left:50%; transform:translateX(-50%);
+    font-size:1.5rem; color:#ff4d4d; text-shadow:1px 1px 3px #000; z-index:10;
+}
+</style>
+</head>
+<body>
+<canvas id="gameCanvas"></canvas>
+<div id="scoreboard">Pontuação: 0 | Recorde: 0</div>
+
+<script>
+const canvas = document.getElementById("gameCanvas");
+const ctx = canvas.getContext("2d");
+let w = window.innerWidth;
+let h = window.innerHeight;
+canvas.width = w; canvas.height = h;
+
+window.addEventListener('resize', ()=>{ w=window.innerWidth; h=window.innerHeight; canvas.width=w; canvas.height=h; });
+
+let player = {x:w/2-30, y:h-80, width:60, height:60, speed:10};
+let obstacles = [];
+let powerUps = [];
+let specialBlocks = [];
+let particles = [];
+let baseSpeed = 3;
+let obstacleSpeed = baseSpeed;
+let score = 0;
+let highScore = parseInt(localStorage.getItem("dodgeHighScore"))||0;
+let gameInterval, spawnInterval, powerUpInterval, specialInterval;
+
+// Controle teclado
+let keys = {};
+document.addEventListener("keydown", e=>{keys[e.key]=true;});
+document.addEventListener("keyup", e=>{keys[e.key]=false;});
+
+// Controle toque/arraste
+let touchX=null;
+canvas.addEventListener("touchstart", e=>{touchX=e.touches[0].clientX;});
+canvas.addEventListener("touchmove", e=>{
+    e.preventDefault();
+    let deltaX = e.touches[0].clientX - touchX;
+    player.x+=deltaX;
+    if(player.x<0) player.x=0;
+    if(player.x+player.width>w) player.x=w-player.width;
+    touchX=e.touches[0].clientX;
+},{passive:false});
+
+// Inicia o jogo
+function startGame(){
+    player.x=w/2-player.width/2;
+    obstacles=[]; powerUps=[]; specialBlocks=[]; particles=[];
+    score=0; obstacleSpeed=baseSpeed;
+    clearInterval(spawnInterval); clearInterval(gameInterval); clearInterval(powerUpInterval); clearInterval(specialInterval);
+    spawnInterval=setInterval(spawnObstacle,1000);
+    powerUpInterval=setInterval(spawnPowerUp,5000);
+    specialInterval=setInterval(spawnSpecialBlock,15000);
+    gameInterval=setInterval(gameLoop,20);
+}
+
+// Obstáculos
+function spawnObstacle(){
+    const size=Math.random()*40+20;
+    const x=Math.random()*(w-size);
+    const color=`hsl(${Math.random()*360},70%,60%)`;
+    obstacles.push({x:x,y:-size,width:size,height:size,color:color});
+}
+
+// Power-ups / moedas (círculos)
+function spawnPowerUp(){
+    const size=30;
+    const x=Math.random()*(w-size);
+    const types=["coin","slow"];
+    const type=types[Math.floor(Math.random()*types.length)];
+    const color=type==="coin"?"gold":"cyan";
+    powerUps.push({x:x,y:-size,radius:size/2,type:type,color:color});
+}
+
+// Blocos especiais
+function spawnSpecialBlock(){
+    specialBlocks=[];
+    const numBlocks=5;
+    for(let i=0;i<numBlocks;i++){
+        const size=40;
+        const x=Math.random()*(w-size);
+        specialBlocks.push({x:x,y:-size,width:size,height:size,collected:false,color:"magenta"});
+    }
+}
+
+// Partículas
+function spawnParticles(x,y,color){
+    for(let i=0;i<15;i++){
+        particles.push({x:x, y:y, vx:(Math.random()-0.5)*6, vy:(Math.random()-0.5)*6, alpha:1, color:color});
+    }
+}
+
+// Loop principal
+function gameLoop(){
+    ctx.clearRect(0,0,w,h);
+
+    // Movimento teclado
+    if(keys["ArrowLeft"] && player.x>0) player.x -= player.speed;
+    if(keys["ArrowRight"] && player.x+player.width<w) player.x += player.speed;
+
+    // Jogador
+    ctx.fillStyle="#ff4d4d";
+    ctx.fillRect(player.x, player.y, player.width, player.height);
+
+    // Obstáculos
+    for(let i=obstacles.length-1;i>=0;i--){
+        let ob=obstacles[i];
+        ob.y += obstacleSpeed;
+        ctx.fillStyle=ob.color;
+        ctx.fillRect(ob.x,ob.y,ob.width,ob.height);
+
+        if(player.x<ob.x+ob.width && player.x+player.width>ob.x &&
+           player.y<ob.y+ob.height && player.y+player.height>ob.y){
+               spawnParticles(player.x+player.width/2,player.y+player.height/2,"red");
+               restartGame();
+               return;
+        }
+        if(ob.y>h){spawnParticles(ob.x+ob.width/2,ob.y,ob.color); obstacles.splice(i,1);}
+    }
+
+    // Power-ups circulares
+    for(let i=powerUps.length-1;i>=0;i--){
+        let p=powerUps[i]; p.y+=obstacleSpeed*0.7;
+        ctx.beginPath();
+        ctx.arc(p.x+p.radius,p.y+p.radius,p.radius,0,Math.PI*2);
+        ctx.fillStyle=p.color; ctx.fill();
+        ctx.closePath();
+
+        // Colisão circular
+        let dx = (player.x+player.width/2) - (p.x+p.radius);
+        let dy = (player.y+player.height/2) - (p.y+p.radius);
+        let distance = Math.sqrt(dx*dx + dy*dy);
+        if(distance < p.radius + Math.min(player.width,player.height)/2){
+            if(p.type==="coin") score+=100;
+            if(p.type==="slow") obstacleSpeed = Math.max(baseSpeed, obstacleSpeed-2);
+            spawnParticles(p.x+p.radius,p.y+p.radius,p.color);
+            powerUps.splice(i,1);
+            continue;
+        }
+        if(p.y>h) powerUps.splice(i,1);
+    }
+
+    // Blocos especiais
+    for(let i=specialBlocks.length-1;i>=0;i--){
+        let b=specialBlocks[i]; 
+        if(!b.collected) b.y += obstacleSpeed*0.6;
+        ctx.fillStyle=b.collected?"#777":b.color;
+        ctx.fillRect(b.x,b.y,b.width,b.height);
+        if(!b.collected && player.x<b.x+b.width && player.x+player.width>b.x &&
+           player.y<b.y+b.height && player.y+player.height>b.y){
+               b.collected=true;
+               spawnParticles(b.x+b.width/2,b.y+b.height/2,b.color);
+        }
+        if(b.y>h) specialBlocks.splice(i,1);
+    }
+
+    // Explosão de blocos especiais coletados
+    if(specialBlocks.length>0 && specialBlocks.every(b=>b.collected)){
+        for(let b of specialBlocks){
+            spawnParticles(b.x+b.width/2,b.y+b.height/2,"magenta");
+            score +=50;
+        }
+        specialBlocks=[];
+    }
+
+    // Partículas
+    for(let i=particles.length-1;i>=0;i--){
+        let part=particles[i]; part.x+=part.vx; part.y+=part.vy; part.alpha-=0.03;
+        if(part.alpha<=0){particles.splice(i,1); continue;}
+        ctx.fillStyle=`rgba(${hexToRgb(part.color)},${part.alpha})`;
+        ctx.fillRect(part.x,part.y,4,4);
+    }
+
+    // Pontuação e velocidade
+    score++;
+    obstacleSpeed=baseSpeed+Math.min(score/500,5);
+    if(score%1000<500) obstacleSpeed*=0.8;
+    if(score>highScore){highScore=score; localStorage.setItem("dodgeHighScore",highScore);}
+    document.getElementById("scoreboard").innerText = `Pontuação: ${score} | Recorde: ${highScore}`;
+}
+
+function hexToRgb(c){
+    let ctx2=document.createElement("canvas").getContext("2d"); ctx2.fillStyle=c;
+    let col=ctx2.fillStyle;
+    if(col.startsWith("#")){let bigint=parseInt(col.slice(1),16); return `${(bigint>>16)&255},${(bigint>>8)&255},${bigint&255}`;}
+    else if(col.startsWith("rgb")) return col.match(/\d+/g).join(",");
+    return "255,255,255";
+}
+
+// Reinício automático
+function restartGame(){
+    clearInterval(spawnInterval); clearInterval(powerUpInterval); clearInterval(specialInterval); clearInterval(gameInterval);
+    startGame();
+}
+
+// Inicia automaticamente
+window.onload=startGame;
+</script>
+<script>
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('sw.js')
+    .then(() => console.log('Service Worker registrado com sucesso!'))
+    .catch(err => console.log('Erro ao registrar Service Worker:', err));
+}
+</script>
+
+</body>
+</html>
